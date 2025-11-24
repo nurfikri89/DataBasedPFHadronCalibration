@@ -1,4 +1,3 @@
-
 // ROOT RDataFrame -kirjasto nopeaan, lazy datan käsittelyyn
 #include "ROOT/RDataFrame.hxx"
 // ROOTin histogrammi- ja tiedostokirjastot
@@ -27,10 +26,9 @@
 #include <map>
 #include <vector>
 #include <fstream>
-#include "include1/vetomap_utils.h"
+#include "vetomap_utils.h"
+// #include "./scripts/vetomap_utils.h"
 #include "ROOT/RDFHelpers.hxx"
-
-
 
 // golden JSON -apufunktiot
 std::map<unsigned int, std::vector<std::pair<unsigned int, unsigned int>>> LoadGoldenJSON(const std::string &filename) {
@@ -72,11 +70,10 @@ const int nTrkPBins = sizeof(trkPBins)/sizeof(double) - 1;
 // helper: käännetään /store/... XRootD-URL:ksi (HIP SE). Jätä valmiit root://-URLit sellaisenaan
 std::string NormalizeInputPath(const std::string &s) {
   if (s.rfind("root://", 0) == 0) return s;                // jo valmis
-  if (s.rfind("/store/", 0) == 0) return "root://hip-cms-se.csc.fi//" + s;  // HUOM tupla-slash
+  if (s.rfind("/store/user/nbinnorj", 0) == 0) return "root://hip-cms-se.csc.fi/" + s;  // HUOM tupla-slash
+  if (s.rfind("/eos/cms/store/", 0) == 0) return "root://eoscms.cern.ch/" + s;  // HUOM tupla-slash
   return s;
 }
-
-
 
 
 // PÄÄFUNKTIO: tekee histogrammit ja kirjoittaa ne tiedostoon
@@ -85,19 +82,18 @@ void run_histograms(const char* listfile, const char* tag, const char* outpath =
 
 
   // Lataa veto map (aja kerran per prosessi)
-  try {
-    veto::Load("/eos/user/m/mmarjama/my_pion_analysis/scripts/JetVetoMap.root", "h_jetVetoMap");
-    std::cout << "[VETO] Loaded veto map." << std::endl;
-  } catch (const std::exception& e) {
-    std::cerr << e.what() << "\n[VETO] Proceeding without veto (map missing)." << std::endl;
-  }
-
+  // try {
+  //   veto::Load("/eos/user/m/mmarjama/my_pion_analysis/scripts/JetVetoMap.root", "h_jetVetoMap");
+  //   std::cout << "[VETO] Loaded veto map." << std::endl;
+  // } catch (const std::exception& e) {
+  //   std::cerr << e.what() << "\n[VETO] Proceeding without veto (map missing)." << std::endl;
+  // }
 
     // aloitetaan ajanotto ajon kestolle
     auto start = std::chrono::high_resolution_clock::now();
 
     // monisäikeisyys
-    ROOT::EnableImplicitMT();
+    ROOT::EnableImplicitMT(4);
 
     // LUETAAN ROOT-tiedostojen polut listasta (robusti)
     std::ifstream infile(listfile);
@@ -109,9 +105,10 @@ void run_histograms(const char* listfile, const char* tag, const char* outpath =
     std::vector<std::string> files;
     files.reserve(1000);
     while (std::getline(infile, line)) {
-        auto norm = NormalizeInputPath(line);
-        if (!norm.empty())
-            files.push_back(norm);
+      if (!line.empty() && line[0] == '#') continue;
+      auto norm = NormalizeInputPath(line);
+      if (!norm.empty())
+        files.push_back(norm);
     }
 
     // std::cout << "Processing " << files.size() << " files..." << std::endl;
@@ -127,18 +124,22 @@ void run_histograms(const char* listfile, const char* tag, const char* outpath =
     std::vector<std::string> badFiles;
 
     for (const auto& f : files) {
-      try {
-        // Yritetään avata tiedosto vain testimielessä
-        std::unique_ptr<TFile> testFile(TFile::Open(f.c_str()));
-        if (!testFile || testFile->IsZombie() || testFile->GetNkeys() == 0) {
-          badFiles.push_back(f);
-          continue;
-        }
-        goodFiles.push_back(f);
-      } catch (...) {
-        badFiles.push_back(f);
-      }
+      goodFiles.push_back(f);
     }
+
+    // for (const auto& f : files) {
+    //   try {
+    //     // Yritetään avata tiedosto vain testimielessä
+    //     std::unique_ptr<TFile> testFile(TFile::Open(f.c_str()));
+    //     if (!testFile || testFile->IsZombie() || testFile->GetNkeys() == 0) {
+    //       badFiles.push_back(f);
+    //       continue;
+    //     }
+    //     goodFiles.push_back(f);
+    //   } catch (...) {
+    //     badFiles.push_back(f);
+    //   }
+    // }
 
     // Tulostetaan yhteenveto
     std::cout << "Good files: " << goodFiles.size() << " / " << files.size() << std::endl;
@@ -154,14 +155,16 @@ void run_histograms(const char* listfile, const char* tag, const char* outpath =
 
     std::cout << "Creating RDataFrame with " << goodFiles.size() << " valid files..." << std::endl;
 
+    TChain treeEvents("Events");
+    for (const auto& f : goodFiles) {
+      treeEvents.Add(f.c_str());
+    }
+
     // Luo RDataFrame vain ehjistä tiedostoista
-    ROOT::RDataFrame df("Events", goodFiles);
+    // ROOT::RDataFrame df("Events", goodFiles);
 
-
-
+    ROOT::RDataFrame df(treeEvents);
     ROOT::RDF::Experimental::AddProgressBar(df);
-
-
 
     // // --- Golden JSON (vain datalle) ---
     // auto golden = LoadGoldenJSON("/eos/user/c/cmsdqm/www/CAF/certification/Collisions25/Cert_Collisions2025_391658_397595_Golden.json");
@@ -186,7 +189,8 @@ void run_histograms(const char* listfile, const char* tag, const char* outpath =
         bool is2025 = (sample.find("2025")    != std::string::npos);
 
         if (isData && is2025) {
-            applyGoldenJSON = true;
+            // applyGoldenJSON = true;
+            applyGoldenJSON = false;
         }
     }
 
@@ -213,36 +217,6 @@ void run_histograms(const char* listfile, const char* tag, const char* outpath =
         df_json = df.Filter("1", "No JSON filter");
     }
 
-
-
-//     // --- Event cleaning flags ---
-//     auto df_clean = df_json.Filter(
-//         "Flag_goodVertices && "
-//         "Flag_globalSuperTightHalo2016Filter && "
-//         "Flag_EcalDeadCellTriggerPrimitiveFilter && "
-//         "Flag_BadPFMuonFilter && "
-//         "Flag_BadPFMuonDzFilter && "
-//         "Flag_hfNoisyHitsFilter && "
-//         "Flag_eeBadScFilter && "
-//         "Flag_ecalBadCalibFilter",
-//         "Event cleaning flags");
-
-//     // --- GLOBAL ETA CUT (barrel)
-//     auto df_eta = df_clean.Filter("abs(PFCand_eta) < 1.3", "Global |eta| < 1.3 cut");
-
-//     // --- Progress monitor ---
-//     auto df_mon = df_eta.Define("dummyCounter", [](ULong64_t entry){
-//         if (entry % 100000 == 0)
-//             std::cout << "[Progress] Processed " << entry << " events" << std::endl;
-//         return 0;
-//     }, {"rdfentry_"});
-
-//     // --- Tästä eteenpäin normaali analyysi alkaa df_eta:sta ---
-//     auto df_base = df_eta
-//       .Define("isoMask", "(abs(PFCand_pdgId) == 211) && PFCand_isIsolatedChargedHadron && abs(PFCand_eta) <= 1.3")
-//       .Filter("Sum(isoMask) > 0", "Has isolated charged pions")
-
-
     // --- Event cleaning flags (standard CMS “tight” set) ---
     auto df_clean = df_json.Filter(
         "Flag_goodVertices && "
@@ -256,55 +230,56 @@ void run_histograms(const char* listfile, const char* tag, const char* outpath =
         "Event cleaning flags");
 
     auto df_eta = df_clean
-      .Define("etaMask", "abs(PFCand_eta) < 1.3");   // RVec<bool> mask
-
+      .Define("etaMask", "abs(IsoChHadPFCand_eta) < 1.3");   // RVec<bool> mask
 
     // --- Progress monitor ---
-    auto df_mon = df_eta.Define("dummyCounter", [](ULong64_t entry){
-        if (entry % 100000 == 0)
-            std::cout << "[Progress] Processed " << entry << " events" << std::endl;
-        return 0;
-    }, {"rdfentry_"});
+    // auto df_mon = df_eta.Define("dummyCounter", [](ULong64_t entry){
+    //     if (entry % 100000 == 0)
+    //         std::cout << "[Progress] Processed " << entry << " events" << std::endl;
+    //     return 0;
+    // }, {"rdfentry_"});
 
     // --- Tästä eteenpäin jatkuu normaali analyysiketju ---
     auto df_base = df_eta
       // Isoloidut pionit
-      .Define("isoMask", "(abs(PFCand_pdgId) == 211) && PFCand_isIsolatedChargedHadron && abs(PFCand_eta) <= 1.3")
+      .Define("isoMask", "etaMask")
       .Filter("Sum(isoMask) > 0", "Has isolated charged pions")
 
       // Isoloitujen kandidaattien η ja φ (tarvitaan veto-maskiin)
-      .Define("etaIso", "PFCand_eta[isoMask]")
-      .Define("phiIso", "PFCand_phi[isoMask]")
+      .Define("etaIso", "IsoChHadPFCand_eta[isoMask]")
+      .Define("phiIso", "IsoChHadPFCand_phi[isoMask]")
 
        // LISÄTTY BARREL-RAJAUS
       // .Filter("All(abs(etaIso) >= 1.3)", "Barrel region (|eta| >= 1.3)")
 
-
-      .Define("vetoMask", "veto::Mask(etaIso, phiIso)")
+      // .Define("vetoMask", "veto::Mask(etaIso, phiIso)")
 
       // Vetomaski (1 => hylätään)
       // Käytä tästä eteenpäin vain hyväksyttyjä: isoMask && !vetoMask
-      .Define("keepMask", R"(
-        ROOT::VecOps::RVec<char> keep(isoMask.size(), false);
-        size_t j = 0;
-        for (size_t i = 0; i < isoMask.size(); ++i) {
-          if (isoMask[i]) {
-            // Jos tämä iso-kandidaatti ei ole veto-alueella, pidä se
-            keep[i] = (j < vetoMask.size()) ? !vetoMask[j] : true;
-            ++j;
-          }
-        }
-        return keep;
-      )")
+      // .Define("keepMask", R"(
+      //   ROOT::VecOps::RVec<char> keep(isoMask.size(), false);
+      //   size_t j = 0;
+      //   for (size_t i = 0; i < isoMask.size(); ++i) {
+      //     if (isoMask[i]) {
+      //       // Jos tämä iso-kandidaatti ei ole veto-alueella, pidä se
+      //       keep[i] = (j < vetoMask.size()) ? !vetoMask[j] : true;
+      //       ++j;
+      //     }
+      //   }
+      //   return keep;
+      // )")
+
+      // .Define("keepMask", "ROOT::VecOps::RVec<bool>(isoMask.size(),true)")
+      .Define("keepMask", "isoMask")
 
       // Käytetään jatkossa vain hyväksyttyjä kandidaatteja
-      .Define("ptIso",      "PFCand_pt[keepMask]")
-      .Redefine("etaIso",   "PFCand_eta[keepMask]")  // <--- tämä oli se ongelmakohta
+      .Define("ptIso",      "IsoChHadPFCand_pt[keepMask]")
+      .Redefine("etaIso",   "IsoChHadPFCand_eta[keepMask]")  // <--- tämä oli se ongelmakohta
       .Define("pIso",       "ptIso * cosh(etaIso)")
-      .Define("hcalIso",    "PFCand_hcalEnergy[keepMask]")
-      .Define("ecalIso",    "PFCand_ecalEnergy[keepMask]")
-      .Define("rawEcalIso", "PFCand_rawEcalEnergy[keepMask]")
-      .Define("rawHcalIso", "PFCand_rawHcalEnergy[keepMask]");
+      .Define("hcalIso",    "IsoChHadPFCand_hcalEnergy[keepMask]")
+      .Define("ecalIso",    "IsoChHadPFCand_ecalEnergy[keepMask]")
+      .Define("rawEcalIso", "IsoChHadPFCand_rawEcalEnergy[keepMask]")
+      .Define("rawHcalIso", "IsoChHadPFCand_rawHcalEnergy[keepMask]");
 
     // ROOT::RDF::EnableProgressBar();
 
@@ -329,51 +304,15 @@ void run_histograms(const char* listfile, const char* tag, const char* outpath =
       .Define("fracEcal", "ecalIso / pIso")
       .Define("fracHcal", "hcalIso / pIso")
 
-
-
   // Hadronityypit: JIT tulkitsee tämän elementtikohtaiseksi operaatioksi
-  .Define("isHadH",   "(ROOT::VecOps::RVec<int>)((fracEcal <= 0) && (fracHcal > 0))")
-  .Define("isHadE",   "(ROOT::VecOps::RVec<int>)((fracEcal > 0)  && (fracHcal <= 0))")
-  .Define("isHadMIP", "(ROOT::VecOps::RVec<int>)((fracEcal > 0)  && (fracEcal * pIso < 1) && (fracHcal > 0))")
-  .Define("isHadEH",  "(ROOT::VecOps::RVec<int>)((fracEcal > 0)  && (fracEcal * pIso >= 1) && (fracHcal > 0))")
-
-  // bool/int/char -> float : vältetään VecOps::Cast, käytetään geneeristä lambdaa
-  .Define("isHadH_float",
-          [](const ROOT::RVec<int>& v) -> ROOT::RVec<float> {
-              ROOT::RVec<float> o;
-              o.reserve(v.size());
-              for (auto x : v) o.push_back(x ? 1.f : 0.f);
-              return o;
-          },
-          {"isHadH"})
-
-  .Define("isHadE_float",
-          [](const ROOT::RVec<int>& v) -> ROOT::RVec<float> {
-              ROOT::RVec<float> o;
-              o.reserve(v.size());
-              for (auto x : v) o.push_back(x ? 1.f : 0.f);
-              return o;
-          },
-          {"isHadE"})
-
-  .Define("isHadMIP_float",
-          [](const ROOT::RVec<int>& v) -> ROOT::RVec<float> {
-              ROOT::RVec<float> o;
-              o.reserve(v.size());
-              for (auto x : v) o.push_back(x ? 1.f : 0.f);
-              return o;
-          },
-          {"isHadMIP"})
-
-  .Define("isHadEH_float",
-          [](const ROOT::RVec<int>& v) -> ROOT::RVec<float> {
-              ROOT::RVec<float> o;
-              o.reserve(v.size());
-              for (auto x : v) o.push_back(x ? 1.f : 0.f);
-              return o;
-          },
-          {"isHadEH"})
-
+  .Define("isHadH",   "(fracEcal <= 0) && (fracHcal > 0)")
+  .Define("isHadE",   "(fracEcal > 0)  && (fracHcal <= 0)")
+  .Define("isHadMIP", "(fracEcal > 0)  && (fracEcal * pIso < 1) && (fracHcal > 0)")
+  .Define("isHadEH",  "(fracEcal > 0)  && (fracEcal * pIso >= 1) && (fracHcal > 0)")
+  .Define("isHadH_float",   "return ROOT::VecOps::Map(isHadH,  [](const bool& v){return float(v);});")
+  .Define("isHadE_float",   "return ROOT::VecOps::Map(isHadE,  [](const bool& v){return float(v);});")
+  .Define("isHadMIP_float", "return ROOT::VecOps::Map(isHadMIP,[](const bool& v){return float(v);});")
+  .Define("isHadEH_float",  "return ROOT::VecOps::Map(isHadEH, [](const bool& v){return float(v);});")
 
   // Leikkausversiot (suodata sekä x että y passHCAL:lla)
   .Define("pIso_cut",           "pIso[passHCAL]")
@@ -388,35 +327,13 @@ void run_histograms(const char* listfile, const char* tag, const char* outpath =
   .Define("rawEpIso_MIP", "ROOT::VecOps::Where(isHadMIP, ep_raw_all, -1.0)")
   .Define("rawEpIso_EH",  "ROOT::VecOps::Where(isHadEH,  ep_raw_all, -1.0)");
 
-
-
-
-
-
-
 // 2b) Per-tyyppiset maskit HCAL-cutilla + viipaleet (X=E/p default, Y=HCALcorr, Z=p)
 auto df_iso2 = df_iso
   // yhdistelmämaskit: hadronityyppi AND passHCAL
-  .Define("mask_H_cut", R"(
-    ROOT::VecOps::RVec<char> m(isHadH.size());
-    for (size_t i = 0; i < m.size(); ++i) m[i] = isHadH[i] && passHCAL[i];
-    return m;
-  )")
-  .Define("mask_E_cut", R"(
-    ROOT::VecOps::RVec<char> m(isHadE.size());
-    for (size_t i = 0; i < m.size(); ++i) m[i] = isHadE[i] && passHCAL[i];
-    return m;
-  )")
-  .Define("mask_MIP_cut", R"(
-    ROOT::VecOps::RVec<char> m(isHadMIP.size());
-    for (size_t i = 0; i < m.size(); ++i) m[i] = isHadMIP[i] && passHCAL[i];
-    return m;
-  )")
-  .Define("mask_EH_cut", R"(
-    ROOT::VecOps::RVec<char> m(isHadEH.size());
-    for (size_t i = 0; i < m.size(); ++i) m[i] = isHadEH[i] && passHCAL[i];
-    return m;
-  )")
+  .Define("mask_H_cut",  "isHadH   && passHCAL")
+  .Define("mask_E_cut",  "isHadE   && passHCAL")
+  .Define("mask_MIP_cut","isHadMIP && passHCAL")
+  .Define("mask_EH_cut", "isHadEH  && passHCAL")
 
   // viipaleet: X=E/p (default), Y=HCALcorr, Z=p  (HCAL cut)
   .Define("ep_def_H_cut",   "ep_def_all[mask_H_cut]")
@@ -437,26 +354,10 @@ auto df_iso2 = df_iso
 // Per-tyyppiset maskit ILMAN HCAL-cuttia + viipaleet (X=E/p default, Y=HCALcorr, Z=p)
 auto df_iso_nocut = df_iso
   // yhdistelmämaskit: vain hadronityyppi (ei passHCAL)
-  .Define("mask_H_all", R"(
-    ROOT::VecOps::RVec<char> m(isHadH.size());
-    for (size_t i = 0; i < m.size(); ++i) m[i] = isHadH[i];
-    return m;
-  )")
-  .Define("mask_E_all", R"(
-    ROOT::VecOps::RVec<char> m(isHadE.size());
-    for (size_t i = 0; i < m.size(); ++i) m[i] = isHadE[i];
-    return m;
-  )")
-  .Define("mask_MIP_all", R"(
-    ROOT::VecOps::RVec<char> m(isHadMIP.size());
-    for (size_t i = 0; i < m.size(); ++i) m[i] = isHadMIP[i];
-    return m;
-  )")
-  .Define("mask_EH_all", R"(
-    ROOT::VecOps::RVec<char> m(isHadEH.size());
-    for (size_t i = 0; i < m.size(); ++i) m[i] = isHadEH[i];
-    return m;
-  )")
+  .Define("mask_H_all",   "isHadH")
+  .Define("mask_E_all",   "isHadE")
+  .Define("mask_MIP_all", "isHadMIP")
+  .Define("mask_EH_all",  "isHadEH")
 
   // viipaleet: X=E/p (default), Y=HCALcorr, Z=p  (ilman leikkausta)
   .Define("ep_def_H_all",   "ep_def_all[mask_H_all]")
@@ -508,8 +409,6 @@ df_iso = df_iso
   .Define("defEpIso_MIP", "ROOT::VecOps::Where(isHadMIP, ep_def_all, -1.0)")
   .Define("defEpIso_EH",  "ROOT::VecOps::Where(isHadEH,  ep_def_all, -1.0)");
 
-
-
 h1_histos.push_back(df_iso.Histo1D({"h_ep_isHadH",   "Default E/p: HCAL only;E/p;Events", 40, 0.05, 2.5}, "defEpIso_H"));
 h1_histos.push_back(df_iso.Histo1D({"h_ep_isHadE",   "Default E/p: ECAL only;E/p;Events", 40, 0.05, 2.5}, "defEpIso_E"));
 h1_histos.push_back(df_iso.Histo1D({"h_ep_isHadMIP", "Default E/p: MIP;E/p;Events",       40, 0.05, 2.5}, "defEpIso_MIP"));
@@ -533,26 +432,8 @@ profiles.push_back(df_iso.Profile1D({"h_frac_MIP_cut", "Fraction (HCAL E/E_{raw}
 profiles.push_back(df_iso.Profile1D({"h_frac_EH_cut",  "Fraction (HCAL E/E_{raw}>0.9): ECAL+HCAL;p (GeV);fraction",    nTrkPBins, trkPBins}, "pIso_cut", "isHadEH_float_cut"));
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// // 2D & profiilit: S1–S4 (nimet yhtenevät myöhempien plottien kanssa)
-// // S1: Raw/p, HCAL cut
+// 2D & profiilit: S1–S4 (nimet yhtenevät myöhempien plottien kanssa)
+// S1: Raw/p, HCAL cut
 // h2_histos.push_back(df_iso.Histo2D({"h2_ep_vs_p_S1_raw_cut", "S1: Raw E/p vs p (HCAL E/E_{raw}>0.9);p (GeV);E/p",
 //                                     nTrkPBins, trkPBins, 40, 0.05, 2.25}, "pIso", "ep_raw_cut"));
 // profiles .push_back(df_iso.Profile1D({"prof_ep_vs_p_S1_raw_cut", "S1: <Raw E/p> vs p (HCAL E/E_{raw}>0.9);p (GeV);E/p",
@@ -561,7 +442,7 @@ profiles.push_back(df_iso.Profile1D({"h_frac_EH_cut",  "Fraction (HCAL E/E_{raw}
 //                                     "S1: Raw E/p vs E_{HCAL}/E_{HCAL}^{raw} vs p (cut);E/p;E_{HCAL}/E_{HCAL}^{raw};p (GeV)",
 //                                     50, 0.05, 2.5,  50, 0.9, 2.5,  30, 0.0, 100.0}, "ep_raw_cut", "hcalCorrFactor", "pIso"));
 
-// // S2: Default/p, HCAL cut
+// S2: Default/p, HCAL cut
 // h2_histos.push_back(df_iso.Histo2D({"h2_ep_vs_p_S2_def_cut", "S2: Default E/p vs p (HCAL E/E_{raw}>0.9);p (GeV);E/p",
 //                                     nTrkPBins, trkPBins, 40, 0.05, 2.25}, "pIso", "ep_def_cut"));
 // profiles .push_back(df_iso.Profile1D({"prof_ep_vs_p_S2_def_cut", "S2: <Default E/p> vs p (HCAL E/E_{raw}>0.9);p (GeV);E/p",
@@ -570,7 +451,7 @@ profiles.push_back(df_iso.Profile1D({"h_frac_EH_cut",  "Fraction (HCAL E/E_{raw}
 //                                     "S2: Default E/p vs E_{HCAL}/E_{HCAL}^{raw} vs p (cut);E/p;E_{HCAL}/E_{HCAL}^{raw};p (GeV)",
 //                                     50, 0.05, 2.5,  50, 0.9, 2.5,  30, 0.0, 100.0}, "ep_def_cut", "hcalCorrFactor", "pIso"));
 
-// // S3: Raw/p, no cut
+// S3: Raw/p, no cut
 // h2_histos.push_back(df_iso.Histo2D({"h2_ep_vs_p_S3_raw_all", "S3: Raw E/p vs p (no cut);p (GeV);E/p",
 //                                     nTrkPBins, trkPBins, 40, 0.05, 2.25}, "pIso", "ep_raw_all"));
 // profiles .push_back(df_iso.Profile1D({"prof_ep_vs_p_S3_raw_all", "S3: <Raw E/p> vs p (no cut);p (GeV);E/p",
@@ -579,7 +460,7 @@ profiles.push_back(df_iso.Profile1D({"h_frac_EH_cut",  "Fraction (HCAL E/E_{raw}
 //                                     "S3: Raw E/p vs E_{HCAL}/E_{HCAL}^{raw} vs p;E/p;E_{HCAL}/E_{HCAL}^{raw};p (GeV)",
 //                                     50, 0.0, 2.5,  50, 0.0, 2.5,  30, 0.0, 100.0}, "ep_raw_all", "hcalCorrFactor", "pIso"));
 
-// // S4: Default/p, no cut
+// S4: Default/p, no cut
 // h2_histos.push_back(df_iso.Histo2D({"h2_ep_vs_p_S4_def_all", "S4: Default E/p vs p (no cut);p (GeV);E/p",
 //                                     nTrkPBins, trkPBins, 40, 0.05, 2.25}, "pIso", "ep_def_all"));
 // profiles .push_back(df_iso.Profile1D({"prof_ep_vs_p_S4_def_all", "S4: <Default E/p> vs p (no cut);p (GeV);E/p",
@@ -588,7 +469,7 @@ profiles.push_back(df_iso.Profile1D({"h_frac_EH_cut",  "Fraction (HCAL E/E_{raw}
 //                                     "S4: Default E/p vs E_{HCAL}/E_{HCAL}^{raw} vs p;E/p;E_{HCAL}/E_{HCAL}^{raw};p (GeV)",
 //                                     50, 0.0, 2.5,  50, 0.0, 2.5,  30, 0.0, 100.0}, "ep_def_all", "hcalCorrFactor", "pIso"));
 
-// // Per-tyyppiset 3D:t: Default E/p + HCAL cut (plot_histograms.cc käyttää näitä)
+// Per-tyyppiset 3D:t: Default E/p + HCAL cut (plot_histograms.cc käyttää näitä)
 // h3_histos.push_back(df_iso2.Histo3D({"h3_resp_corr_p_isHadH",
 //   "Default E/p vs E_{HCAL}/E_{HCAL}^{raw} vs p (HCAL cut, HCAL only);E/p;E_{HCAL}/E_{HCAL}^{raw};p (GeV)",
 //   50, 0.05, 2.5,  50, 0.9, 2.5,  30, 0.0, 100.0}, "ep_def_H_cut", "hcal_H_cut", "p_H_cut"));
@@ -602,7 +483,7 @@ profiles.push_back(df_iso.Profile1D({"h_frac_EH_cut",  "Fraction (HCAL E/E_{raw}
 //   "Default E/p vs E_{HCAL}/E_{HCAL}^{raw} vs p (HCAL cut, ECAL+HCAL);E/p;E_{HCAL}/E_{HCAL}^{raw};p (GeV)",
 //   50, 0.05, 2.5,  50, 0.9, 2.5,  30, 0.0, 100.0}, "ep_def_EH_cut", "hcal_EH_cut", "p_EH_cut"));
 
-// // Per-tyyppiset 3D:t: Default E/p, no cut (Y 0.0–2.5)
+// Per-tyyppiset 3D:t: Default E/p, no cut (Y 0.0–2.5)
 // h3_histos.push_back(df_iso_nocut.Histo3D({"h3_resp_def_p_isHadH_all",
 //   "Default E/p vs E_{HCAL}/E_{HCAL}^{raw} vs p (no cut, HCAL only);E/p;E_{HCAL}/E_{HCAL}^{raw};p (GeV)",
 //   50, 0.05, 2.5,  50, 0.0, 2.5,  30, 0.0, 100.0}, "ep_def_H_all", "hcal_H_all", "p_H_all"));
@@ -616,7 +497,7 @@ profiles.push_back(df_iso.Profile1D({"h_frac_EH_cut",  "Fraction (HCAL E/E_{raw}
 //   "Default E/p vs E_{HCAL}/E_{HCAL}^{raw} vs p (no cut, ECAL+HCAL);E/p;E_{HCAL}/E_{HCAL}^{raw};p (GeV)",
 //   50, 0.05, 2.5,  50, 0.0, 2.5,  30, 0.0, 100.0}, "ep_def_EH_all", "hcal_EH_all", "p_EH_all"));
 
-// // Per-tyyppiset 3D:t: Raw E/p, no cut (Y 0.0–2.5)
+// Per-tyyppiset 3D:t: Raw E/p, no cut (Y 0.0–2.5)
 // h3_histos.push_back(df_iso_raw_all.Histo3D({"h3_resp_raw_p_isHadH_all",
 //   "Raw E/p vs E_{HCAL}/E_{HCAL}^{raw} vs p (no cut, HCAL only);E/p;E_{HCAL}/E_{HCAL}^{raw};p (GeV)",
 //   50, 0.05, 2.5,  50, 0.0, 2.5,  30, 0.0, 100.0}, "ep_raw_H_all", "hcal_H_all", "p_H_all"));
@@ -630,7 +511,7 @@ profiles.push_back(df_iso.Profile1D({"h_frac_EH_cut",  "Fraction (HCAL E/E_{raw}
 //   "Raw E/p vs E_{HCAL}/E_{HCAL}^{raw} vs p (no cut, ECAL+HCAL);E/p;E_{HCAL}/E_{HCAL}^{raw};p (GeV)",
 //   50, 0.05, 2.5,  50, 0.0, 2.5,  30, 0.0, 100.0}, "ep_raw_EH_all", "hcal_EH_all", "p_EH_all"));
 
-// // Per-tyyppiset 3D:t: Raw E/p + HCAL cut (pyysit nämä nimillä "h3_resp_raw_p_isHad*_cut")
+// Per-tyyppiset 3D:t: Raw E/p + HCAL cut (pyysit nämä nimillä "h3_resp_raw_p_isHad*_cut")
 // h3_histos.push_back(df_iso_raw_cut.Histo3D({"h3_resp_raw_p_isHadH_cut",
 //   "Raw E/p vs E_{HCAL}/E_{HCAL}^{raw} vs p (HCAL cut, HCAL only);E/p;E_{HCAL}/E_{HCAL}^{raw};p (GeV)",
 //   50, 0.05, 2.5,  50, 0.9, 2.5,  30, 0.0, 100.0}, "ep_raw_H_cut", "hcal_H_cut", "p_H_cut"));
@@ -645,317 +526,312 @@ profiles.push_back(df_iso.Profile1D({"h_frac_EH_cut",  "Fraction (HCAL E/E_{raw}
 //   50, 0.05, 2.5,  50, 0.9, 2.5,  30, 0.0, 100.0}, "ep_raw_EH_cut", "hcal_EH_cut", "p_EH_cut"));
 
 
-
-
-
-
-
 // 2D & profiilit: S1–S4 (nimet yhtenevät myöhempien plottien kanssa)
 
 // ------------------------------------------------------------
 // S1: Raw/p, HCAL cut — inklusiivinen (kaikki hadronityypit)
 // ------------------------------------------------------------
-h2_histos.push_back(df_iso.Histo2D(
-  {"h2_ep_vs_p_S1_raw_cut",
-   "S1: Raw E/p vs p (HCAL E/E_{raw}>0.9);p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.0, 2.5},
-  "pIso", "ep_raw_cut"));
+// h2_histos.push_back(df_iso.Histo2D(
+//   {"h2_ep_vs_p_S1_raw_cut",
+//    "S1: Raw E/p vs p (HCAL E/E_{raw}>0.9);p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.0, 2.5},
+//   "pIso", "ep_raw_cut"));
 
-profiles.push_back(df_iso.Profile1D(
-  {"prof_ep_vs_p_S1_raw_cut",
-   "S1: <Raw E/p> vs p (HCAL E/E_{raw}>0.9);p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "pIso", "ep_raw_cut"));
+// profiles.push_back(df_iso.Profile1D(
+//   {"prof_ep_vs_p_S1_raw_cut",
+//    "S1: <Raw E/p> vs p (HCAL E/E_{raw}>0.9);p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "pIso", "ep_raw_cut"));
 
-h3_histos.push_back(df_iso.Histo3D(
-  {"h3_S1_raw_cut_ep_vs_hcal_p",
-   "S1: Raw E/p vs E_{HCAL}/E_{HCAL}^{raw} vs p (cut);E/p;E_{HCAL}/E_{HCAL}^{raw};p (GeV)",
-   50, 0.0, 2.5,
-   50, 0.0, 2.5,
-   150,0.0, 150.0},
-  "ep_raw_cut", "hcalCorrFactor", "pIso"));
+// h3_histos.push_back(df_iso.Histo3D(
+//   {"h3_S1_raw_cut_ep_vs_hcal_p",
+//    "S1: Raw E/p vs E_{HCAL}/E_{HCAL}^{raw} vs p (cut);E/p;E_{HCAL}/E_{HCAL}^{raw};p (GeV)",
+//    50, 0.0, 2.5,
+//    50, 0.0, 2.5,
+//    150,0.0, 150.0},
+//   "ep_raw_cut", "hcalCorrFactor", "pIso"));
 
 // ------------------------------------------------------------
 // S1: Raw/p, HCAL cut — per hadron type (H, E, MIP, EH)
 // (raw E/p + HCAL cut: df_iso_raw_cut)
 // ------------------------------------------------------------
-h2_histos.push_back(df_iso_raw_cut.Histo2D(
-  {"h2_ep_vs_p_S1_raw_cut_isHadH",
-   "S1 (HCAL cut, HCAL only): Raw E/p vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.0, 2.5},
-  "p_H_cut", "ep_raw_H_cut"));
-profiles.push_back(df_iso_raw_cut.Profile1D(
-  {"prof_ep_vs_p_S1_raw_cut_isHadH",
-   "S1 (HCAL cut, HCAL only): <Raw E/p> vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "p_H_cut", "ep_raw_H_cut"));
+// h2_histos.push_back(df_iso_raw_cut.Histo2D(
+//   {"h2_ep_vs_p_S1_raw_cut_isHadH",
+//    "S1 (HCAL cut, HCAL only): Raw E/p vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.0, 2.5},
+//   "p_H_cut", "ep_raw_H_cut"));
+// profiles.push_back(df_iso_raw_cut.Profile1D(
+//   {"prof_ep_vs_p_S1_raw_cut_isHadH",
+//    "S1 (HCAL cut, HCAL only): <Raw E/p> vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "p_H_cut", "ep_raw_H_cut"));
 
-h2_histos.push_back(df_iso_raw_cut.Histo2D(
-  {"h2_ep_vs_p_S1_raw_cut_isHadE",
-   "S1 (HCAL cut, ECAL only): Raw E/p vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.0, 2.5},
-  "p_E_cut", "ep_raw_E_cut"));
-profiles.push_back(df_iso_raw_cut.Profile1D(
-  {"prof_ep_vs_p_S1_raw_cut_isHadE",
-   "S1 (HCAL cut, ECAL only): <Raw E/p> vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "p_E_cut", "ep_raw_E_cut"));
+// h2_histos.push_back(df_iso_raw_cut.Histo2D(
+//   {"h2_ep_vs_p_S1_raw_cut_isHadE",
+//    "S1 (HCAL cut, ECAL only): Raw E/p vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.0, 2.5},
+//   "p_E_cut", "ep_raw_E_cut"));
+// profiles.push_back(df_iso_raw_cut.Profile1D(
+//   {"prof_ep_vs_p_S1_raw_cut_isHadE",
+//    "S1 (HCAL cut, ECAL only): <Raw E/p> vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "p_E_cut", "ep_raw_E_cut"));
 
-h2_histos.push_back(df_iso_raw_cut.Histo2D(
-  {"h2_ep_vs_p_S1_raw_cut_isHadMIP",
-   "S1 (HCAL cut, MIP): Raw E/p vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.0, 2.5},
-  "p_MIP_cut", "ep_raw_MIP_cut"));
-profiles.push_back(df_iso_raw_cut.Profile1D(
-  {"prof_ep_vs_p_S1_raw_cut_isHadMIP",
-   "S1 (HCAL cut, MIP): <Raw E/p> vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "p_MIP_cut", "ep_raw_MIP_cut"));
+// h2_histos.push_back(df_iso_raw_cut.Histo2D(
+//   {"h2_ep_vs_p_S1_raw_cut_isHadMIP",
+//    "S1 (HCAL cut, MIP): Raw E/p vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.0, 2.5},
+//   "p_MIP_cut", "ep_raw_MIP_cut"));
+// profiles.push_back(df_iso_raw_cut.Profile1D(
+//   {"prof_ep_vs_p_S1_raw_cut_isHadMIP",
+//    "S1 (HCAL cut, MIP): <Raw E/p> vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "p_MIP_cut", "ep_raw_MIP_cut"));
 
-h2_histos.push_back(df_iso_raw_cut.Histo2D(
-  {"h2_ep_vs_p_S1_raw_cut_isHadEH",
-   "S1 (HCAL cut, ECAL+HCAL): Raw E/p vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.0, 2.5},
-  "p_EH_cut", "ep_raw_EH_cut"));
-profiles.push_back(df_iso_raw_cut.Profile1D(
-  {"prof_ep_vs_p_S1_raw_cut_isHadEH",
-   "S1 (HCAL cut, ECAL+HCAL): <Raw E/p> vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "p_EH_cut", "ep_raw_EH_cut"));
+// h2_histos.push_back(df_iso_raw_cut.Histo2D(
+//   {"h2_ep_vs_p_S1_raw_cut_isHadEH",
+//    "S1 (HCAL cut, ECAL+HCAL): Raw E/p vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.0, 2.5},
+//   "p_EH_cut", "ep_raw_EH_cut"));
+// profiles.push_back(df_iso_raw_cut.Profile1D(
+//   {"prof_ep_vs_p_S1_raw_cut_isHadEH",
+//    "S1 (HCAL cut, ECAL+HCAL): <Raw E/p> vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "p_EH_cut", "ep_raw_EH_cut"));
 
 
 // ------------------------------------------------------------
 // S2: Default/p, HCAL cut — inklusiivinen
 // ------------------------------------------------------------
-h2_histos.push_back(df_iso.Histo2D(
-  {"h2_ep_vs_p_S2_def_cut",
-   "S2: Default E/p vs p (HCAL E/E_{raw}>0.9);p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.0, 2.5},
-  "pIso", "ep_def_cut"));
+// h2_histos.push_back(df_iso.Histo2D(
+//   {"h2_ep_vs_p_S2_def_cut",
+//    "S2: Default E/p vs p (HCAL E/E_{raw}>0.9);p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.0, 2.5},
+//   "pIso", "ep_def_cut"));
 
-profiles.push_back(df_iso.Profile1D(
-  {"prof_ep_vs_p_S2_def_cut",
-   "S2: <Default E/p> vs p (HCAL E/E_{raw}>0.9);p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "pIso", "ep_def_cut"));
+// profiles.push_back(df_iso.Profile1D(
+//   {"prof_ep_vs_p_S2_def_cut",
+//    "S2: <Default E/p> vs p (HCAL E/E_{raw}>0.9);p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "pIso", "ep_def_cut"));
 
-h3_histos.push_back(df_iso.Histo3D(
-  {"h3_S2_def_cut_ep_vs_hcal_p",
-   "S2: Default E/p vs E_{HCAL}/E_{HCAL}^{raw} vs p (cut);E/p;E_{HCAL}/E_{HCAL}^{raw};p (GeV)",
-   50, 0.0, 2.5,
-   50, 0., 2.5,
-   150,0.0, 150.0},
-  "ep_def_cut", "hcalCorrFactor", "pIso"));
+// h3_histos.push_back(df_iso.Histo3D(
+//   {"h3_S2_def_cut_ep_vs_hcal_p",
+//    "S2: Default E/p vs E_{HCAL}/E_{HCAL}^{raw} vs p (cut);E/p;E_{HCAL}/E_{HCAL}^{raw};p (GeV)",
+//    50, 0.0, 2.5,
+//    50, 0., 2.5,
+//    150,0.0, 150.0},
+//   "ep_def_cut", "hcalCorrFactor", "pIso"));
 
 // ------------------------------------------------------------
 // S2: Default/p, HCAL cut — per hadron type (H, E, MIP, EH)
 // (default E/p + HCAL cut: df_iso2)
 // ------------------------------------------------------------
-h2_histos.push_back(df_iso2.Histo2D(
-  {"h2_ep_vs_p_S2_def_cut_isHadH",
-   "S2 (HCAL cut, HCAL only): Default E/p vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.05, 2.25},
-  "p_H_cut", "ep_def_H_cut"));
-profiles.push_back(df_iso2.Profile1D(
-  {"prof_ep_vs_p_S2_def_cut_isHadH",
-   "S2 (HCAL cut, HCAL only): <Default E/p> vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "p_H_cut", "ep_def_H_cut"));
+// h2_histos.push_back(df_iso2.Histo2D(
+//   {"h2_ep_vs_p_S2_def_cut_isHadH",
+//    "S2 (HCAL cut, HCAL only): Default E/p vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.05, 2.25},
+//   "p_H_cut", "ep_def_H_cut"));
+// profiles.push_back(df_iso2.Profile1D(
+//   {"prof_ep_vs_p_S2_def_cut_isHadH",
+//    "S2 (HCAL cut, HCAL only): <Default E/p> vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "p_H_cut", "ep_def_H_cut"));
 
-h2_histos.push_back(df_iso2.Histo2D(
-  {"h2_ep_vs_p_S2_def_cut_isHadE",
-   "S2 (HCAL cut, ECAL only): Default E/p vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.0, 2.5},
-  "p_E_cut", "ep_def_E_cut"));
-profiles.push_back(df_iso2.Profile1D(
-  {"prof_ep_vs_p_S2_def_cut_isHadE",
-   "S2 (HCAL cut, ECAL only): <Default E/p> vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "p_E_cut", "ep_def_E_cut"));
+// h2_histos.push_back(df_iso2.Histo2D(
+//   {"h2_ep_vs_p_S2_def_cut_isHadE",
+//    "S2 (HCAL cut, ECAL only): Default E/p vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.0, 2.5},
+//   "p_E_cut", "ep_def_E_cut"));
+// profiles.push_back(df_iso2.Profile1D(
+//   {"prof_ep_vs_p_S2_def_cut_isHadE",
+//    "S2 (HCAL cut, ECAL only): <Default E/p> vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "p_E_cut", "ep_def_E_cut"));
 
-h2_histos.push_back(df_iso2.Histo2D(
-  {"h2_ep_vs_p_S2_def_cut_isHadMIP",
-   "S2 (HCAL cut, MIP): Default E/p vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.0, 2.5},
-  "p_MIP_cut", "ep_def_MIP_cut"));
-profiles.push_back(df_iso2.Profile1D(
-  {"prof_ep_vs_p_S2_def_cut_isHadMIP",
-   "S2 (HCAL cut, MIP): <Default E/p> vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "p_MIP_cut", "ep_def_MIP_cut"));
+// h2_histos.push_back(df_iso2.Histo2D(
+//   {"h2_ep_vs_p_S2_def_cut_isHadMIP",
+//    "S2 (HCAL cut, MIP): Default E/p vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.0, 2.5},
+//   "p_MIP_cut", "ep_def_MIP_cut"));
+// profiles.push_back(df_iso2.Profile1D(
+//   {"prof_ep_vs_p_S2_def_cut_isHadMIP",
+//    "S2 (HCAL cut, MIP): <Default E/p> vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "p_MIP_cut", "ep_def_MIP_cut"));
 
-h2_histos.push_back(df_iso2.Histo2D(
-  {"h2_ep_vs_p_S2_def_cut_isHadEH",
-   "S2 (HCAL cut, ECAL+HCAL): Default E/p vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.0, 2.5},
-  "p_EH_cut", "ep_def_EH_cut"));
-profiles.push_back(df_iso2.Profile1D(
-  {"prof_ep_vs_p_S2_def_cut_isHadEH",
-   "S2 (HCAL cut, ECAL+HCAL): <Default E/p> vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "p_EH_cut", "ep_def_EH_cut"));
+// h2_histos.push_back(df_iso2.Histo2D(
+//   {"h2_ep_vs_p_S2_def_cut_isHadEH",
+//    "S2 (HCAL cut, ECAL+HCAL): Default E/p vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.0, 2.5},
+//   "p_EH_cut", "ep_def_EH_cut"));
+// profiles.push_back(df_iso2.Profile1D(
+//   {"prof_ep_vs_p_S2_def_cut_isHadEH",
+//    "S2 (HCAL cut, ECAL+HCAL): <Default E/p> vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "p_EH_cut", "ep_def_EH_cut"));
 
 
 // ------------------------------------------------------------
 // S3: Raw/p, no cut — inklusiivinen
 // ------------------------------------------------------------
-h2_histos.push_back(df_iso.Histo2D(
-  {"h2_ep_vs_p_S3_raw_all",
-   "S3: Raw E/p vs p (no cut);p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.0, 2.5},
-  "pIso", "ep_raw_all"));
+// h2_histos.push_back(df_iso.Histo2D(
+//   {"h2_ep_vs_p_S3_raw_all",
+//    "S3: Raw E/p vs p (no cut);p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.0, 2.5},
+//   "pIso", "ep_raw_all"));
 
-profiles.push_back(df_iso.Profile1D(
-  {"prof_ep_vs_p_S3_raw_all",
-   "S3: <Raw E/p> vs p (no cut);p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "pIso", "ep_raw_all"));
+// profiles.push_back(df_iso.Profile1D(
+//   {"prof_ep_vs_p_S3_raw_all",
+//    "S3: <Raw E/p> vs p (no cut);p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "pIso", "ep_raw_all"));
 
-h3_histos.push_back(df_iso.Histo3D(
-  {"h3_S3_raw_ep_vs_hcal_p",
-   "S3: Raw E/p vs E_{HCAL}/E_{HCAL}^{raw} vs p;E/p;E_{HCAL}/E_{HCAL}^{raw};p (GeV)",
-   50, 0.0, 2.5,
-   50, 0.0, 2.5,
-   150,0.0, 150.0},
-  "ep_raw_all", "hcalCorrFactor", "pIso"));
+// h3_histos.push_back(df_iso.Histo3D(
+//   {"h3_S3_raw_ep_vs_hcal_p",
+//    "S3: Raw E/p vs E_{HCAL}/E_{HCAL}^{raw} vs p;E/p;E_{HCAL}/E_{HCAL}^{raw};p (GeV)",
+//    50, 0.0, 2.5,
+//    50, 0.0, 2.5,
+//    150,0.0, 150.0},
+//   "ep_raw_all", "hcalCorrFactor", "pIso"));
 
 // ------------------------------------------------------------
 // S3: Raw/p, no cut — per hadron type (df_iso_raw_all)
 // ------------------------------------------------------------
-h2_histos.push_back(df_iso_raw_all.Histo2D(
-  {"h2_ep_vs_p_S3_raw_all_isHadH",
-   "S3 (no cut, HCAL only): Raw E/p vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.0, 2.5},
-  "p_H_all", "ep_raw_H_all"));
-profiles.push_back(df_iso_raw_all.Profile1D(
-  {"prof_ep_vs_p_S3_raw_all_isHadH",
-   "S3 (no cut, HCAL only): <Raw E/p> vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "p_H_all", "ep_raw_H_all"));
+// h2_histos.push_back(df_iso_raw_all.Histo2D(
+//   {"h2_ep_vs_p_S3_raw_all_isHadH",
+//    "S3 (no cut, HCAL only): Raw E/p vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.0, 2.5},
+//   "p_H_all", "ep_raw_H_all"));
+// profiles.push_back(df_iso_raw_all.Profile1D(
+//   {"prof_ep_vs_p_S3_raw_all_isHadH",
+//    "S3 (no cut, HCAL only): <Raw E/p> vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "p_H_all", "ep_raw_H_all"));
 
-h2_histos.push_back(df_iso_raw_all.Histo2D(
-  {"h2_ep_vs_p_S3_raw_all_isHadE",
-   "S3 (no cut, ECAL only): Raw E/p vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.0, 2.5},
-  "p_E_all", "ep_raw_E_all"));
-profiles.push_back(df_iso_raw_all.Profile1D(
-  {"prof_ep_vs_p_S3_raw_all_isHadE",
-   "S3 (no cut, ECAL only): <Raw E/p> vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "p_E_all", "ep_raw_E_all"));
+// h2_histos.push_back(df_iso_raw_all.Histo2D(
+//   {"h2_ep_vs_p_S3_raw_all_isHadE",
+//    "S3 (no cut, ECAL only): Raw E/p vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.0, 2.5},
+//   "p_E_all", "ep_raw_E_all"));
+// profiles.push_back(df_iso_raw_all.Profile1D(
+//   {"prof_ep_vs_p_S3_raw_all_isHadE",
+//    "S3 (no cut, ECAL only): <Raw E/p> vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "p_E_all", "ep_raw_E_all"));
 
-h2_histos.push_back(df_iso_raw_all.Histo2D(
-  {"h2_ep_vs_p_S3_raw_all_isHadMIP",
-   "S3 (no cut, MIP): Raw E/p vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.0, 2.5},
-  "p_MIP_all", "ep_raw_MIP_all"));
-profiles.push_back(df_iso_raw_all.Profile1D(
-  {"prof_ep_vs_p_S3_raw_all_isHadMIP",
-   "S3 (no cut, MIP): <Raw E/p> vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "p_MIP_all", "ep_raw_MIP_all"));
+// h2_histos.push_back(df_iso_raw_all.Histo2D(
+//   {"h2_ep_vs_p_S3_raw_all_isHadMIP",
+//    "S3 (no cut, MIP): Raw E/p vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.0, 2.5},
+//   "p_MIP_all", "ep_raw_MIP_all"));
+// profiles.push_back(df_iso_raw_all.Profile1D(
+//   {"prof_ep_vs_p_S3_raw_all_isHadMIP",
+//    "S3 (no cut, MIP): <Raw E/p> vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "p_MIP_all", "ep_raw_MIP_all"));
 
-h2_histos.push_back(df_iso_raw_all.Histo2D(
-  {"h2_ep_vs_p_S3_raw_all_isHadEH",
-   "S3 (no cut, ECAL+HCAL): Raw E/p vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.0, 2.50},
-  "p_EH_all", "ep_raw_EH_all"));
-profiles.push_back(df_iso_raw_all.Profile1D(
-  {"prof_ep_vs_p_S3_raw_all_isHadEH",
-   "S3 (no cut, ECAL+HCAL): <Raw E/p> vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "p_EH_all", "ep_raw_EH_all"));
+// h2_histos.push_back(df_iso_raw_all.Histo2D(
+//   {"h2_ep_vs_p_S3_raw_all_isHadEH",
+//    "S3 (no cut, ECAL+HCAL): Raw E/p vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.0, 2.50},
+//   "p_EH_all", "ep_raw_EH_all"));
+// profiles.push_back(df_iso_raw_all.Profile1D(
+//   {"prof_ep_vs_p_S3_raw_all_isHadEH",
+//    "S3 (no cut, ECAL+HCAL): <Raw E/p> vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "p_EH_all", "ep_raw_EH_all"));
 
 
 // ------------------------------------------------------------
 // S4: Default/p, no cut — inklusiivinen
 // ------------------------------------------------------------
-h2_histos.push_back(df_iso.Histo2D(
-  {"h2_ep_vs_p_S4_def_all",
-   "S4: Default E/p vs p (no cut);p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.0, 2.50},
-  "pIso", "ep_def_all"));
+// h2_histos.push_back(df_iso.Histo2D(
+//   {"h2_ep_vs_p_S4_def_all",
+//    "S4: Default E/p vs p (no cut);p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.0, 2.50},
+//   "pIso", "ep_def_all"));
 
-profiles.push_back(df_iso.Profile1D(
-  {"prof_ep_vs_p_S4_def_all",
-   "S4: <Default E/p> vs p (no cut);p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "pIso", "ep_def_all"));
+// profiles.push_back(df_iso.Profile1D(
+//   {"prof_ep_vs_p_S4_def_all",
+//    "S4: <Default E/p> vs p (no cut);p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "pIso", "ep_def_all"));
 
-h3_histos.push_back(df_iso.Histo3D(
-  {"h3_S4_def_ep_vs_hcal_p",
-   "S4: Default E/p vs E_{HCAL}/E_{HCAL}^{raw} vs p;E/p;E_{HCAL}/E_{HCAL}^{raw};p (GeV)",
-   50, 0.0, 2.5,
-   50, 0.0, 2.5,
-   150,0.0, 150.0},
-  "ep_def_all", "hcalCorrFactor", "pIso"));
+// h3_histos.push_back(df_iso.Histo3D(
+//   {"h3_S4_def_ep_vs_hcal_p",
+//    "S4: Default E/p vs E_{HCAL}/E_{HCAL}^{raw} vs p;E/p;E_{HCAL}/E_{HCAL}^{raw};p (GeV)",
+//    50, 0.0, 2.5,
+//    50, 0.0, 2.5,
+//    150,0.0, 150.0},
+//   "ep_def_all", "hcalCorrFactor", "pIso"));
 
 // ------------------------------------------------------------
 // S4: Default/p, no cut — per hadron type (df_iso_nocut)
 // ------------------------------------------------------------
-h2_histos.push_back(df_iso_nocut.Histo2D(
-  {"h2_ep_vs_p_S4_def_all_isHadH",
-   "S4 (no cut, HCAL only): Default E/p vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.0, 2.5},
-  "p_H_all", "ep_def_H_all"));
-profiles.push_back(df_iso_nocut.Profile1D(
-  {"prof_ep_vs_p_S4_def_all_isHadH",
-   "S4 (no cut, HCAL only): <Default E/p> vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "p_H_all", "ep_def_H_all"));
+// h2_histos.push_back(df_iso_nocut.Histo2D(
+//   {"h2_ep_vs_p_S4_def_all_isHadH",
+//    "S4 (no cut, HCAL only): Default E/p vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.0, 2.5},
+//   "p_H_all", "ep_def_H_all"));
+// profiles.push_back(df_iso_nocut.Profile1D(
+//   {"prof_ep_vs_p_S4_def_all_isHadH",
+//    "S4 (no cut, HCAL only): <Default E/p> vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "p_H_all", "ep_def_H_all"));
 
-h2_histos.push_back(df_iso_nocut.Histo2D(
-  {"h2_ep_vs_p_S4_def_all_isHadE",
-   "S4 (no cut, ECAL only): Default E/p vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.0, 2.5},
-  "p_E_all", "ep_def_E_all"));
-profiles.push_back(df_iso_nocut.Profile1D(
-  {"prof_ep_vs_p_S4_def_all_isHadE",
-   "S4 (no cut, ECAL only): <Default E/p> vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "p_E_all", "ep_def_E_all"));
+// h2_histos.push_back(df_iso_nocut.Histo2D(
+//   {"h2_ep_vs_p_S4_def_all_isHadE",
+//    "S4 (no cut, ECAL only): Default E/p vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.0, 2.5},
+//   "p_E_all", "ep_def_E_all"));
+// profiles.push_back(df_iso_nocut.Profile1D(
+//   {"prof_ep_vs_p_S4_def_all_isHadE",
+//    "S4 (no cut, ECAL only): <Default E/p> vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "p_E_all", "ep_def_E_all"));
 
-h2_histos.push_back(df_iso_nocut.Histo2D(
-  {"h2_ep_vs_p_S4_def_all_isHadMIP",
-   "S4 (no cut, MIP): Default E/p vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.0, 2.5},
-  "p_MIP_all", "ep_def_MIP_all"));
-profiles.push_back(df_iso_nocut.Profile1D(
-  {"prof_ep_vs_p_S4_def_all_isHadMIP",
-   "S4 (no cut, MIP): <Default E/p> vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "p_MIP_all", "ep_def_MIP_all"));
+// h2_histos.push_back(df_iso_nocut.Histo2D(
+//   {"h2_ep_vs_p_S4_def_all_isHadMIP",
+//    "S4 (no cut, MIP): Default E/p vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.0, 2.5},
+//   "p_MIP_all", "ep_def_MIP_all"));
+// profiles.push_back(df_iso_nocut.Profile1D(
+//   {"prof_ep_vs_p_S4_def_all_isHadMIP",
+//    "S4 (no cut, MIP): <Default E/p> vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "p_MIP_all", "ep_def_MIP_all"));
 
-h2_histos.push_back(df_iso_nocut.Histo2D(
-  {"h2_ep_vs_p_S4_def_all_isHadEH",
-   "S4 (no cut, ECAL+HCAL): Default E/p vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins,
-   40, 0.0, 2.5},
-  "p_EH_all", "ep_def_EH_all"));
-profiles.push_back(df_iso_nocut.Profile1D(
-  {"prof_ep_vs_p_S4_def_all_isHadEH",
-   "S4 (no cut, ECAL+HCAL): <Default E/p> vs p;p (GeV);E/p",
-   nTrkPBins, trkPBins},
-  "p_EH_all", "ep_def_EH_all"));
+// h2_histos.push_back(df_iso_nocut.Histo2D(
+//   {"h2_ep_vs_p_S4_def_all_isHadEH",
+//    "S4 (no cut, ECAL+HCAL): Default E/p vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins,
+//    40, 0.0, 2.5},
+//   "p_EH_all", "ep_def_EH_all"));
+// profiles.push_back(df_iso_nocut.Profile1D(
+//   {"prof_ep_vs_p_S4_def_all_isHadEH",
+//    "S4 (no cut, ECAL+HCAL): <Default E/p> vs p;p (GeV);E/p",
+//    nTrkPBins, trkPBins},
+//   "p_EH_all", "ep_def_EH_all"));
 
 
 // ------------------------------------------------------------
@@ -1040,7 +916,8 @@ if (outpath && std::string(outpath).size()>0) {
   // gSystem->mkdir(outdir.c_str(), true);
   // finalPath = outdir + "/" + std::string(tag) + ".root";
   // std::string outdir = "../histograms";
-  std::string outdir = "/eos/user/m/mmarjama/my_pion_analysis/histograms";
+  // std::string outdir = "/eos/user/m/mmarjama/my_pion_analysis/histograms";
+  std::string outdir = "./histograms";
   gSystem->mkdir(outdir.c_str(), true);
   finalPath = outdir + "/" + std::string(tag) + ".root";
 }
