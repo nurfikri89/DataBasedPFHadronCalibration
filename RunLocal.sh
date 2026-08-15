@@ -1,0 +1,7 @@
+root -l -b -q 'scripts/run_histograms.cc("samples_eos/MC24_SingleNeutrino.txt","MC24_SingleNeutrino")'
+root -l -b -q 'scripts/run_histograms.cc("samples_eos/MC25_SingleNeutrino.txt","MC25_SingleNeutrino")'
+root -l -b -q 'scripts/run_histograms.cc("samples_eos/Data24H_ZeroBias.txt","Data24H_ZeroBias")'
+root -l -b -q 'scripts/run_histograms.cc("samples_eos/Data24Iv1_ZeroBias.txt","Data24Iv1_ZeroBias")'
+root -l -b -q 'scripts/run_histograms.cc("samples_eos/Data24Iv2_ZeroBias.txt","Data24Iv2_ZeroBias")'
+root -l -b -q 'scripts/run_histograms.cc("samples_eos/Data25Cv1_ZeroBias.txt","Data25Cv1_ZeroBias")'
+root -l -b -q 'scripts/run_histograms.cc("samples_eos/Data25Cv2_ZeroBias.txt","Data25Cv2_ZeroBias")'
